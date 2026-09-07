@@ -330,7 +330,6 @@
 <body>
 
 <div class="viewport-shell">
-    <!-- Clean Dock bar (Without obvious Admin Icon) -->
     <div class="dock-bar">
         <div class="dock-group">
             <div class="dock-btn active" title="Dossier" onclick="switchView('explore')">
@@ -344,7 +343,7 @@
 
     <div class="main-canvas">
         <div class="floating-top-nav">
-            <!-- Hidden Secret Trigger: Click 7 times to open Admin -->
+            <!-- Hidden Secret Trigger: Click 7 times to unlock -->
             <span class="brand-tag" id="secret-admin-trigger" onclick="handleSecretClick()">SECURE REPOSITORY</span>
             <div class="status-pill">
                 <div class="status-dot"></div>
@@ -369,15 +368,15 @@
     </div>
 </div>
 
-<!-- Hidden Admin Modal -->
+<!-- Admin Modal -->
 <div class="modal-overlay" id="admin-modal">
     <div class="modal-body">
         <button onclick="closeAdmin()" style="position:absolute; top:24px; right:24px; border:none; background:none; font-size:20px; cursor:pointer;">&times;</button>
         
         <div id="admin-login-box">
-            <h3>Admin Access</h3>
-            <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">Authenticate using your authorized account.</p>
-            <button class="action-explore-btn" style="width:100%; justify-content:center;" onclick="executeGoogleLogin()">Sign in with Google</button>
+            <h3>Admin Sign In</h3>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">Sign in via your Google account.</p>
+            <button class="action-explore-btn" id="loginBtn" style="width:100%; justify-content:center;" onclick="executeGoogleLogin()">Sign in with Google</button>
         </div>
 
         <div id="admin-tools-box" style="display:none; flex-direction:column; gap:18px;">
@@ -389,7 +388,7 @@
             <div>
                 <span style="font-size:12px; font-weight:700; color:var(--text-muted);">REGISTER INDIVIDUAL</span>
                 <div style="display:flex; gap:10px; margin-top:8px;">
-                    <input type="text" id="target-name-input" class="input-stylish" placeholder="Name (e.g. Durgesh)">
+                    <input type="text" id="target-name-input" class="input-stylish" placeholder="Name">
                     <button class="action-explore-btn" style="padding:12px 24px;" onclick="addProfile()">Save</button>
                 </div>
             </div>
@@ -411,29 +410,48 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { 
+        getAuth, 
+        signInWithPopup, 
+        signInWithRedirect, 
+        getRedirectResult, 
+        GoogleAuthProvider, 
+        signOut, 
+        onAuthStateChanged,
+        setPersistence,
+        browserLocalPersistence
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { getFirestore, collection, addDoc, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // 1. Firebase Credentials Validated
+    // Proven Active Firebase Config
     const firebaseConfig = {
-        apiKey: "AIzaSyCJkf4BFI2Dnxy6s0zHVL1V_O0UKLNTyFA",
-        authDomain: "vault-app-31cac.firebaseapp.com",
-        databaseURL: "https://vault-app-31cac-default-rtdb.firebaseio.com",
-        projectId: "vault-app-31cac",
-        storageBucket: "vault-app-31cac.firebasestorage.app",
-        messagingSenderId: "1017794169031",
-        appId: "1:1017794169031:web:574d2e2701ed188a6596e2",
-        measurementId: "G-452430JDS2"
+        apiKey: "AIzaSyCsrOKDW7wt7Y9Mvqv0_cRzSEJtQnj1T9k",
+        authDomain: "jee-tracker-31fc9.firebaseapp.com",
+        projectId: "jee-tracker-31fc9",
+        storageBucket: "jee-tracker-31fc9.firebasestorage.app",
+        messagingSenderId: "531917856515",
+        appId: "1:531917856515:web:2f912155cd3b85941e5336"
     };
 
-    // 2. Cloudinary Credentials Validated
+    // Cloudinary Credentials
     const CLOUDINARY_CLOUD_NAME = "f1rdlzvm";
     const CLOUDINARY_PRESET = "vault_preset";
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+
+    setPersistence(auth, browserLocalPersistence).catch(err => console.warn(err));
+
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    // Handle Redirect Login
+    getRedirectResult(auth).then((result) => {
+        if (result && result.user) {
+            refreshAdminDropdown();
+        }
+    }).catch(err => console.warn(err));
 
     let masterRecords = [];
 
@@ -481,10 +499,19 @@
     });
 
     window.executeGoogleLogin = async () => {
+        const btn = document.getElementById('loginBtn');
+        btn.innerText = "Signing in...";
         try {
             await signInWithPopup(auth, provider);
         } catch(err) { 
-            alert(err.message); 
+            console.warn("Popup error, switching to redirect", err);
+            if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+                await signInWithRedirect(auth, provider);
+            } else {
+                alert("Sign-In Error: " + err.message);
+            }
+        } finally {
+            btn.innerText = "Sign in with Google";
         }
     };
 
@@ -496,34 +523,36 @@
         if(!name) return;
 
         try {
-            await addDoc(collection(db, "targets"), { name });
+            await addDoc(collection(db, "vault_targets"), { name });
             input.value = "";
             refreshAdminDropdown();
             loadRibbonTabs();
-            alert("Registered: " + name);
+            alert("Added " + name);
         } catch(e) { alert(e.message); }
     };
 
     async function refreshAdminDropdown() {
         const select = document.getElementById('profile-select');
         select.innerHTML = '<option value="">Choose Profile</option>';
-        const snap = await getDocs(collection(db, "targets"));
-        snap.forEach(doc => {
-            const opt = document.createElement('option');
-            opt.value = doc.data().name;
-            opt.textContent = doc.data().name;
-            select.appendChild(opt);
-        });
+        try {
+            const snap = await getDocs(collection(db, "vault_targets"));
+            snap.forEach(doc => {
+                const opt = document.createElement('option');
+                opt.value = doc.data().name;
+                opt.textContent = doc.data().name;
+                select.appendChild(opt);
+            });
+        } catch(e) { console.error(e); }
     }
 
-    // Direct Cloudinary Upload Function
+    // Cloudinary Direct Upload
     window.uploadToCloudinary = async () => {
         const person = document.getElementById('profile-select').value;
         const fileIn = document.getElementById('media-file-input');
         const feedback = document.getElementById('upload-feedback');
 
         if(!person || fileIn.files.length === 0) {
-            alert("Profile aur file dono select karo!");
+            alert("Profile aur file select kar pehle!");
             return;
         }
 
@@ -535,7 +564,7 @@
         formData.append("file", file);
         formData.append("upload_preset", CLOUDINARY_PRESET);
 
-        feedback.innerText = "Encrypting & Uploading to Cloudinary...";
+        feedback.innerText = "Uploading to Cloudinary...";
 
         try {
             const res = await fetch(endpoint, { method: "POST", body: formData });
@@ -543,8 +572,7 @@
 
             if (!res.ok) throw new Error(data.error?.message || "Upload failed");
 
-            // Firestore database entry
-            await addDoc(collection(db, "media"), {
+            await addDoc(collection(db, "vault_media"), {
                 targetName: person,
                 url: data.secure_url,
                 type: file.type,
@@ -562,29 +590,31 @@
     async function loadRibbonTabs() {
         const ribbon = document.getElementById('names-ribbon');
         ribbon.innerHTML = '<button class="target-pill active" onclick="filterBy(\'all\', this)">All Records</button>';
-        const snap = await getDocs(collection(db, "targets"));
-        snap.forEach(doc => {
-            const btn = document.createElement('button');
-            btn.className = 'target-pill';
-            btn.innerText = doc.data().name;
-            btn.onclick = () => filterBy(doc.data().name, btn);
-            ribbon.appendChild(btn);
-        });
+        try {
+            const snap = await getDocs(collection(db, "vault_targets"));
+            snap.forEach(doc => {
+                const btn = document.createElement('button');
+                btn.className = 'target-pill';
+                btn.innerText = doc.data().name;
+                btn.onclick = () => filterBy(doc.data().name, btn);
+                ribbon.appendChild(btn);
+            });
+        } catch(e) { console.error(e); }
     }
 
     async function loadArchiveFeed() {
         await loadRibbonTabs();
         const feed = document.getElementById('media-feed');
-        feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Decrypting log...</p>';
+        feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Loading records...</p>';
 
         try {
-            const q = query(collection(db, "media"), orderBy("createdAt", "desc"));
+            const q = query(collection(db, "vault_media"), orderBy("createdAt", "desc"));
             const snap = await getDocs(q);
             masterRecords = [];
             snap.forEach(doc => masterRecords.push(doc.data()));
             renderCards(masterRecords);
         } catch(e) {
-            feed.innerHTML = '<p style="color:var(--text-muted);">No records found.</p>';
+            feed.innerHTML = '<p style="color:var(--text-muted);">No records registered.</p>';
         }
     }
 
@@ -592,7 +622,7 @@
         const feed = document.getElementById('media-feed');
         feed.innerHTML = "";
         if(records.length === 0) {
-            feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Vault empty.</p>';
+            feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">No files uploaded.</p>';
             return;
         }
 
