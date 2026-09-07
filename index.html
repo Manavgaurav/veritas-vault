@@ -241,6 +241,7 @@
             gap: 16px;
             flex: 1;
             min-width: 0;
+            pointer-events: none;
         }
 
         .folder-icon-wrap {
@@ -284,6 +285,7 @@
             display: flex;
             align-items: center;
             gap: 6px;
+            z-index: 5;
         }
 
         .icon-action-btn {
@@ -291,7 +293,7 @@
             height: 32px;
             border-radius: 10px;
             border: 1px solid rgba(0,0,0,0.06);
-            background: rgba(255,255,255,0.7);
+            background: rgba(255,255,255,0.85);
             color: var(--text-muted);
             display: flex;
             align-items: center;
@@ -382,26 +384,6 @@
             height: 100%;
             object-fit: cover;
             display: block;
-        }
-
-        .media-frame::after {
-            content: '🔍 Tap to view';
-            position: absolute;
-            bottom: 10px;
-            right: 10px;
-            background: rgba(0,0,0,0.65);
-            color: #ffffff;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 999px;
-            backdrop-filter: blur(6px);
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-
-        .bento-card:hover .media-frame::after {
-            opacity: 1;
         }
 
         .card-footer {
@@ -673,7 +655,6 @@
         updateDoc 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // Active Firebase Config
     const firebaseConfig = {
         apiKey: "AIzaSyCsrOKDW7wt7Y9Mvqv0_cRzSEJtQnj1T9k",
         authDomain: "jee-tracker-31fc9.firebaseapp.com",
@@ -683,7 +664,6 @@
         appId: "1:531917856515:web:2f912155cd3b85941e5336"
     };
 
-    // Cloudinary Credentials
     const CLOUDINARY_CLOUD_NAME = "f1rdlzvm";
     const CLOUDINARY_PRESET = "vault_preset";
 
@@ -708,7 +688,6 @@
     let activePersonName = null;
     let activeSubfolderName = null;
 
-    // --- SECRET CLICK MECHANISM (7 CLICKS WITHIN 3 SECONDS) ---
     let clickCount = 0;
     let clickTimer = null;
 
@@ -770,17 +749,15 @@
 
     window.executeLogout = () => signOut(auth);
 
-    // Auth Helper
-    function ensureAdminAuthenticated() {
+    function checkAdminAuth() {
         if(!auth.currentUser) {
             openAdmin();
-            alert("Please sign in with Google first to modify directories!");
+            alert("Admin Sign-In required to perform edit/delete!");
             return false;
         }
         return true;
     }
 
-    // Create Main Directory Profile
     window.addProfile = async () => {
         const input = document.getElementById('target-name-input');
         const name = input.value.trim();
@@ -796,11 +773,10 @@
         } catch(e) { alert(e.message); }
     };
 
-    // Prompt create subfolder
     window.promptNewSubfolder = async () => {
-        if(!ensureAdminAuthenticated()) return;
+        if(!checkAdminAuth()) return;
         if(!activePersonName) return;
-        const subName = prompt(`Enter new subfolder name for '${activePersonName}':`);
+        const subName = prompt(`New subfolder for '${activePersonName}':`);
         if(!subName || !subName.trim()) return;
 
         try {
@@ -813,127 +789,112 @@
         } catch(e) { alert(e.message); }
     };
 
-    // ==========================================
-    // ROBUST RENAME & DELETE OPERATIONS
-    // ==========================================
+    // --- DIRECTORY RENAME & DELETE (BUBBLE-PROOF) ---
+    window.handleRenameDirectory = async (e, oldName, docId) => {
+        if(e) { e.preventDefault(); e.stopPropagation(); }
+        if(!checkAdminAuth()) return;
 
-    // Rename Main Person Folder
-    window.renameMainFolder = async (e, oldName, docId) => {
-        e.stopPropagation();
-        if(!ensureAdminAuthenticated()) return;
-
-        const newName = prompt(`Enter new name for directory '${oldName}':`, oldName);
+        const newName = prompt(`Enter new name for '${oldName}':`, oldName);
         if(!newName || !newName.trim() || newName.trim().toLowerCase() === oldName.toLowerCase()) return;
 
         const cleanNew = newName.trim();
 
         try {
-            // 1. Update targets document
             await updateDoc(doc(db, "vault_targets", docId), { name: cleanNew });
 
-            // 2. Update subfolders
-            const subsToUpdate = subfoldersList.filter(s => s.targetName.toLowerCase() === oldName.toLowerCase());
-            for (const sub of subsToUpdate) {
-                if (sub.id) {
-                    await updateDoc(doc(db, "vault_subfolders", sub.id), { targetName: cleanNew });
-                }
+            const subs = subfoldersList.filter(s => s.targetName && s.targetName.toLowerCase() === oldName.toLowerCase());
+            for (const s of subs) {
+                if(s.id) await updateDoc(doc(db, "vault_subfolders", s.id), { targetName: cleanNew });
             }
 
-            // 3. Update media items
-            const mediaToUpdate = masterRecords.filter(m => m.targetName.toLowerCase() === oldName.toLowerCase());
-            for (const item of mediaToUpdate) {
-                if (item.id) {
-                    await updateDoc(doc(db, "vault_media", item.id), { targetName: cleanNew });
-                }
+            const media = masterRecords.filter(m => m.targetName && m.targetName.toLowerCase() === oldName.toLowerCase());
+            for (const m of media) {
+                if(m.id) await updateDoc(doc(db, "vault_media", m.id), { targetName: cleanNew });
             }
 
-            // Immediate memory array sync & re-render
-            const targetObj = targetsList.find(t => t.id === docId);
-            if(targetObj) targetObj.name = cleanNew;
+            const tIndex = targetsList.findIndex(t => t.id === docId);
+            if(tIndex !== -1) targetsList[tIndex].name = cleanNew;
+
             subfoldersList.forEach(s => {
-                if(s.targetName.toLowerCase() === oldName.toLowerCase()) s.targetName = cleanNew;
+                if(s.targetName && s.targetName.toLowerCase() === oldName.toLowerCase()) s.targetName = cleanNew;
             });
             masterRecords.forEach(m => {
-                if(m.targetName.toLowerCase() === oldName.toLowerCase()) m.targetName = cleanNew;
+                if(m.targetName && m.targetName.toLowerCase() === oldName.toLowerCase()) m.targetName = cleanNew;
             });
 
             renderMainFolderCards();
             refreshAdminDropdown();
-            alert(`Renamed successfully to '${cleanNew}'!`);
+            alert(`Renamed '${oldName}' to '${cleanNew}'!`);
         } catch(err) {
-            console.error(err);
-            alert("Rename failed: " + err.message);
+            alert("Rename error: " + err.message);
         }
     };
 
-    // Delete Main Person Folder
-    window.deleteMainFolder = async (e, name, docId) => {
-        e.stopPropagation();
-        if(!ensureAdminAuthenticated()) return;
+    window.handleDeleteDirectory = async (e, name, docId) => {
+        if(e) { e.preventDefault(); e.stopPropagation(); }
+        if(!checkAdminAuth()) return;
 
-        if(!confirm(`⚠️ WARNING: Delete directory '${name}' and all its subfolders and files?`)) return;
+        if(!confirm(`⚠️ Are you sure you want to delete '${name}' and all its files permanently?`)) return;
 
         try {
             await deleteDoc(doc(db, "vault_targets", docId));
 
-            const subsToDelete = subfoldersList.filter(s => s.targetName.toLowerCase() === name.toLowerCase());
-            for (const sub of subsToDelete) {
-                if(sub.id) await deleteDoc(doc(db, "vault_subfolders", sub.id));
+            const subs = subfoldersList.filter(s => s.targetName && s.targetName.toLowerCase() === name.toLowerCase());
+            for (const s of subs) {
+                if(s.id) await deleteDoc(doc(db, "vault_subfolders", s.id));
             }
 
-            const mediaToDelete = masterRecords.filter(m => m.targetName.toLowerCase() === name.toLowerCase());
-            for (const item of mediaToDelete) {
-                if(item.id) await deleteDoc(doc(db, "vault_media", item.id));
+            const media = masterRecords.filter(m => m.targetName && m.targetName.toLowerCase() === name.toLowerCase());
+            for (const m of media) {
+                if(m.id) await deleteDoc(doc(db, "vault_media", m.id));
             }
 
             targetsList = targetsList.filter(t => t.id !== docId);
-            subfoldersList = subfoldersList.filter(s => s.targetName.toLowerCase() !== name.toLowerCase());
-            masterRecords = masterRecords.filter(m => m.targetName.toLowerCase() !== name.toLowerCase());
+            subfoldersList = subfoldersList.filter(s => !(s.targetName && s.targetName.toLowerCase() === name.toLowerCase()));
+            masterRecords = masterRecords.filter(m => !(m.targetName && m.targetName.toLowerCase() === name.toLowerCase()));
 
             renderMainFolderCards();
             refreshAdminDropdown();
-            alert(`Directory '${name}' deleted!`);
+            alert(`Deleted directory '${name}'!`);
         } catch(err) {
-            alert("Delete failed: " + err.message);
+            alert("Delete error: " + err.message);
         }
     };
 
-    // Rename Subfolder
-    window.renameSubfolder = async (e, parentName, oldSubName) => {
-        e.stopPropagation();
-        if(!ensureAdminAuthenticated()) return;
+    // --- SUBFOLDER RENAME & DELETE ---
+    window.handleRenameSubfolder = async (e, parentName, oldSub) => {
+        if(e) { e.preventDefault(); e.stopPropagation(); }
+        if(!checkAdminAuth()) return;
 
-        const newSub = prompt(`Enter new name for subfolder '${oldSubName}':`, oldSubName);
-        if(!newSub || !newSub.trim() || newSub.trim().toLowerCase() === oldSubName.toLowerCase()) return;
+        const newSub = prompt(`Enter new name for subfolder '${oldSub}':`, oldSub);
+        if(!newSub || !newSub.trim() || newSub.trim().toLowerCase() === oldSub.toLowerCase()) return;
 
         const cleanSub = newSub.trim();
 
         try {
-            const matchingSubs = subfoldersList.filter(s => 
-                s.targetName.toLowerCase() === parentName.toLowerCase() && 
-                s.subfolder && s.subfolder.toLowerCase() === oldSubName.toLowerCase()
+            const subs = subfoldersList.filter(s => 
+                s.targetName && s.targetName.toLowerCase() === parentName.toLowerCase() && 
+                s.subfolder && s.subfolder.toLowerCase() === oldSub.toLowerCase()
             );
-
-            for (const s of matchingSubs) {
+            for (const s of subs) {
                 if(s.id) await updateDoc(doc(db, "vault_subfolders", s.id), { subfolder: cleanSub });
             }
 
-            const mediaToUpdate = masterRecords.filter(m => 
-                m.targetName.toLowerCase() === parentName.toLowerCase() && 
-                ((m.subfolder && m.subfolder.toLowerCase() === oldSubName.toLowerCase()) || (!m.subfolder && oldSubName.toLowerCase() === "general"))
+            const media = masterRecords.filter(m => 
+                m.targetName && m.targetName.toLowerCase() === parentName.toLowerCase() && 
+                ((m.subfolder && m.subfolder.toLowerCase() === oldSub.toLowerCase()) || (!m.subfolder && oldSub.toLowerCase() === "general"))
             );
-
-            for (const m of mediaToUpdate) {
+            for (const m of media) {
                 if(m.id) await updateDoc(doc(db, "vault_media", m.id), { subfolder: cleanSub });
             }
 
             subfoldersList.forEach(s => {
-                if(s.targetName.toLowerCase() === parentName.toLowerCase() && s.subfolder && s.subfolder.toLowerCase() === oldSubName.toLowerCase()) {
+                if(s.targetName && s.targetName.toLowerCase() === parentName.toLowerCase() && s.subfolder && s.subfolder.toLowerCase() === oldSub.toLowerCase()) {
                     s.subfolder = cleanSub;
                 }
             });
             masterRecords.forEach(m => {
-                if(m.targetName.toLowerCase() === parentName.toLowerCase() && ((m.subfolder && m.subfolder.toLowerCase() === oldSubName.toLowerCase()) || (!m.subfolder && oldSubName.toLowerCase() === "general"))) {
+                if(m.targetName && m.targetName.toLowerCase() === parentName.toLowerCase() && ((m.subfolder && m.subfolder.toLowerCase() === oldSub.toLowerCase()) || (!m.subfolder && oldSub.toLowerCase() === "general"))) {
                     m.subfolder = cleanSub;
                 }
             });
@@ -941,58 +902,55 @@
             openPersonFolder(parentName);
             alert(`Subfolder renamed to '${cleanSub}'!`);
         } catch(err) {
-            console.error(err);
-            alert("Rename failed: " + err.message);
+            alert("Rename error: " + err.message);
         }
     };
 
-    // Delete Subfolder
-    window.deleteSubfolder = async (e, parentName, subName) => {
-        e.stopPropagation();
-        if(!ensureAdminAuthenticated()) return;
+    window.handleDeleteSubfolder = async (e, parentName, sub) => {
+        if(e) { e.preventDefault(); e.stopPropagation(); }
+        if(!checkAdminAuth()) return;
 
-        if(!confirm(`⚠️ Delete subfolder '${subName}' and its files?`)) return;
+        if(!confirm(`⚠️ Delete subfolder '${sub}' and all its media files?`)) return;
 
         try {
-            const matchingSubs = subfoldersList.filter(s => 
-                s.targetName.toLowerCase() === parentName.toLowerCase() && 
-                s.subfolder && s.subfolder.toLowerCase() === subName.toLowerCase()
+            const subs = subfoldersList.filter(s => 
+                s.targetName && s.targetName.toLowerCase() === parentName.toLowerCase() && 
+                s.subfolder && s.subfolder.toLowerCase() === sub.toLowerCase()
             );
-            for (const s of matchingSubs) {
+            for (const s of subs) {
                 if(s.id) await deleteDoc(doc(db, "vault_subfolders", s.id));
             }
 
-            const mediaToDelete = masterRecords.filter(m => 
-                m.targetName.toLowerCase() === parentName.toLowerCase() && 
-                ((m.subfolder && m.subfolder.toLowerCase() === subName.toLowerCase()) || (!m.subfolder && subName.toLowerCase() === "general"))
+            const media = masterRecords.filter(m => 
+                m.targetName && m.targetName.toLowerCase() === parentName.toLowerCase() && 
+                ((m.subfolder && m.subfolder.toLowerCase() === sub.toLowerCase()) || (!m.subfolder && sub.toLowerCase() === "general"))
             );
-            for (const m of mediaToDelete) {
+            for (const m of media) {
                 if(m.id) await deleteDoc(doc(db, "vault_media", m.id));
             }
 
-            subfoldersList = subfoldersList.filter(s => !(s.targetName.toLowerCase() === parentName.toLowerCase() && s.subfolder && s.subfolder.toLowerCase() === subName.toLowerCase()));
-            masterRecords = masterRecords.filter(m => !(m.targetName.toLowerCase() === parentName.toLowerCase() && ((m.subfolder && m.subfolder.toLowerCase() === subName.toLowerCase()) || (!m.subfolder && subName.toLowerCase() === "general"))));
+            subfoldersList = subfoldersList.filter(s => !(s.targetName && s.targetName.toLowerCase() === parentName.toLowerCase() && s.subfolder && s.subfolder.toLowerCase() === sub.toLowerCase()));
+            masterRecords = masterRecords.filter(m => !(m.targetName && m.targetName.toLowerCase() === parentName.toLowerCase() && ((m.subfolder && m.subfolder.toLowerCase() === sub.toLowerCase()) || (!m.subfolder && sub.toLowerCase() === "general"))));
 
             openPersonFolder(parentName);
-            alert(`Subfolder '${subName}' deleted!`);
+            alert(`Subfolder '${sub}' deleted!`);
         } catch(err) {
-            alert("Delete failed: " + err.message);
+            alert("Delete error: " + err.message);
         }
     };
 
-    // Delete Single Media File
-    window.deleteMediaFile = async (e, mediaId) => {
-        e.stopPropagation();
-        if(!ensureAdminAuthenticated()) return;
+    window.handleDeleteFile = async (e, mediaId) => {
+        if(e) { e.preventDefault(); e.stopPropagation(); }
+        if(!checkAdminAuth()) return;
 
-        if(!confirm("Delete this record file?")) return;
+        if(!confirm("Delete this record file permanently?")) return;
 
         try {
             await deleteDoc(doc(db, "vault_media", mediaId));
             masterRecords = masterRecords.filter(m => m.id !== mediaId);
             if(activeSubfolderName) openSubfolder(activeSubfolderName);
         } catch(err) {
-            alert("Delete failed: " + err.message);
+            alert("File delete error: " + err.message);
         }
     };
 
@@ -1027,7 +985,6 @@
         } catch(e) { console.error(e); }
     }
 
-    // Multiple Files Upload with Subfolder Support
     window.uploadToCloudinary = async () => {
         const person = document.getElementById('profile-select').value;
         const subfolder = document.getElementById('subfolder-select').value || "General";
@@ -1060,7 +1017,7 @@
 
                 if (!res.ok) throw new Error(data.error?.message || `Upload failed for ${file.name}`);
 
-                const newDocRef = await addDoc(collection(db, "vault_media"), {
+                const newDoc = await addDoc(collection(db, "vault_media"), {
                     targetName: person,
                     subfolder: subfolder,
                     url: data.secure_url,
@@ -1069,7 +1026,7 @@
                 });
 
                 masterRecords.unshift({
-                    id: newDocRef.id,
+                    id: newDoc.id,
                     targetName: person,
                     subfolder: subfolder,
                     url: data.secure_url,
@@ -1087,25 +1044,21 @@
         }
     };
 
-    // Load All Data
     async function loadArchiveFeed() {
         const foldersGrid = document.getElementById('folders-grid');
         if(foldersGrid) foldersGrid.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Loading directories...</p>';
 
         try {
-            // 1. Targets
             const targetsSnap = await getDocs(collection(db, "vault_targets"));
             targetsList = [];
             targetsSnap.forEach(d => targetsList.push({ id: d.id, name: d.data().name }));
 
-            // 2. Subfolders
             try {
                 const subSnap = await getDocs(collection(db, "vault_subfolders"));
                 subfoldersList = [];
                 subSnap.forEach(d => subfoldersList.push({ id: d.id, ...d.data() }));
             } catch(e) { subfoldersList = []; }
 
-            // 3. Media
             const q = query(collection(db, "vault_media"), orderBy("createdAt", "desc"));
             const mediaSnap = await getDocs(q);
             masterRecords = [];
@@ -1123,7 +1076,6 @@
         }
     }
 
-    // LEVEL 1: Render Main Person Folders
     function renderMainFolderCards() {
         const foldersGrid = document.getElementById('folders-grid');
         if(!foldersGrid) return;
@@ -1138,7 +1090,12 @@
             const count = masterRecords.filter(r => r.targetName && r.targetName.toLowerCase() === t.name.toLowerCase()).length;
             const card = document.createElement('div');
             card.className = 'folder-card';
-            card.onclick = () => openPersonFolder(t.name);
+            
+            card.addEventListener('click', (ev) => {
+                if(ev.target.closest('.folder-actions')) return;
+                openPersonFolder(t.name);
+            });
+
             card.innerHTML = `
                 <div class="folder-info-wrap">
                     <div class="folder-icon-wrap">
@@ -1149,11 +1106,11 @@
                         <span>${count} File${count === 1 ? '' : 's'}</span>
                     </div>
                 </div>
-                <div class="folder-actions">
-                    <button class="icon-action-btn" title="Rename Directory" onclick="renameMainFolder(event, '${t.name}', '${t.id}')">
+                <div class="folder-actions" onclick="event.stopPropagation()">
+                    <button class="icon-action-btn" title="Rename Directory" onclick="handleRenameDirectory(event, '${t.name}', '${t.id}')">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                     </button>
-                    <button class="icon-action-btn del" title="Delete Directory" onclick="deleteMainFolder(event, '${t.name}', '${t.id}')">
+                    <button class="icon-action-btn del" title="Delete Directory" onclick="handleDeleteDirectory(event, '${t.name}', '${t.id}')">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                 </div>
@@ -1162,7 +1119,6 @@
         });
     }
 
-    // LEVEL 2: Open Person Folder & Render Subfolders
     window.openPersonFolder = (personName) => {
         activePersonName = personName;
         activeSubfolderName = null;
@@ -1195,7 +1151,12 @@
 
             const card = document.createElement('div');
             card.className = 'folder-card';
-            card.onclick = () => openSubfolder(subName);
+            
+            card.addEventListener('click', (ev) => {
+                if(ev.target.closest('.folder-actions')) return;
+                openSubfolder(subName);
+            });
+
             card.innerHTML = `
                 <div class="folder-info-wrap">
                     <div class="folder-icon-wrap subfolder-icon-wrap">
@@ -1206,12 +1167,12 @@
                         <span>${fileCount} File${fileCount === 1 ? '' : 's'}</span>
                     </div>
                 </div>
-                <div class="folder-actions">
-                    <button class="icon-action-btn" title="Rename Subfolder" onclick="renameSubfolder(event, '${personName}', '${subName}')">
+                <div class="folder-actions" onclick="event.stopPropagation()">
+                    <button class="icon-action-btn" title="Rename Subfolder" onclick="handleRenameSubfolder(event, '${personName}', '${subName}')">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                     </button>
-                    <button class="icon-action-btn del" title="Delete Subfolder" onclick="deleteSubfolder(event, '${personName}', '${subName}')">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    <button class="icon-action-btn del" title="Delete Subfolder" onclick="handleDeleteSubfolder(event, '${personName}', '${subName}')">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
                     </button>
                 </div>
             `;
@@ -1219,7 +1180,6 @@
         });
     };
 
-    // LEVEL 3: Open Subfolder & Render Bento Grid Files
     window.openSubfolder = (subName) => {
         activeSubfolderName = subName;
 
@@ -1247,7 +1207,11 @@
         files.forEach(item => {
             const card = document.createElement('div');
             card.className = 'bento-card';
-            card.onclick = () => openLightbox(item.url, item.type);
+            
+            card.addEventListener('click', (ev) => {
+                if(ev.target.closest('.del')) return;
+                openLightbox(item.url, item.type);
+            });
 
             const mediaTag = item.type && item.type.includes('video')
                 ? `<video src="${item.url}" muted></video>`
@@ -1257,18 +1221,15 @@
                 <div class="media-frame">${mediaTag}</div>
                 <div class="card-footer">
                     <span class="profile-badge">${subName}</span>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <button class="icon-action-btn del" style="width:28px; height:28px;" title="Delete File" onclick="deleteMediaFile(event, '${item.id}')">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
-                        </button>
-                    </div>
+                    <button class="icon-action-btn del" style="width:28px; height:28px;" title="Delete File" onclick="handleDeleteFile(event, '${item.id}')">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
+                    </button>
                 </div>
             `;
             feed.appendChild(card);
         });
     };
 
-    // Navigation Back Buttons
     window.backToMainFolders = () => {
         activePersonName = null;
         activeSubfolderName = null;
@@ -1283,7 +1244,6 @@
         document.getElementById('subfolders-view').style.display = 'flex';
     };
 
-    // Fullscreen Lightbox Preview
     window.openLightbox = (url, type) => {
         const slot = document.getElementById('lightbox-media-slot');
         if (type && type.includes('video')) {
