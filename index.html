@@ -207,7 +207,6 @@
             animation: fadeIn 0.5s ease-out;
         }
 
-        /* Folder Grid View */
         .folders-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -247,6 +246,10 @@
             flex-shrink: 0;
         }
 
+        .subfolder-icon-wrap {
+            background: #334155;
+        }
+
         .folder-meta h4 {
             font-size: 18px;
             font-weight: 800;
@@ -260,7 +263,6 @@
             font-weight: 600;
         }
 
-        /* Folder Contents Inside Header */
         .folder-header-bar {
             display: flex;
             align-items: center;
@@ -269,6 +271,8 @@
             padding: 12px 20px;
             border-radius: 20px;
             border: 1px solid var(--border-soft);
+            flex-wrap: wrap;
+            gap: 12px;
         }
 
         .btn-back-folder {
@@ -367,7 +371,6 @@
             border-radius: 999px;
         }
 
-        /* Lightbox Fullscreen Modal */
         .lightbox-overlay {
             display: none;
             position: fixed;
@@ -428,7 +431,6 @@
             color: #000000;
         }
 
-        /* Admin Modal */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -509,20 +511,33 @@
         </div>
 
         <div class="archive-view" id="archive-view">
-            <!-- View 1: Person Folders List -->
+            <!-- Level 1: Main Directories (Persons) -->
             <div id="folders-container">
                 <h3 style="font-size:18px; font-weight:800; margin-bottom:16px; color:#ffffff; text-shadow:0 2px 6px rgba(0,0,0,0.2);">Directories</h3>
                 <div class="folders-grid" id="folders-grid"></div>
             </div>
 
-            <!-- View 2: Inside A Selected Folder -->
+            <!-- Level 2: Inside Person Folder (Shows Subfolders) -->
+            <div id="subfolders-view" style="display:none; flex-direction:column; gap:20px;">
+                <div class="folder-header-bar">
+                    <button class="btn-back-folder" onclick="backToMainFolders()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
+                        Back to Directories
+                    </button>
+                    <h3 id="current-person-title" style="font-size:16px; font-weight:800; color:var(--text-dark);">Profile</h3>
+                    <button class="btn-back-folder" id="createSubfolderBtn" style="background:#0f172a; color:#fff;" onclick="promptNewSubfolder()">+ New Subfolder</button>
+                </div>
+                <div class="folders-grid" id="subfolders-grid"></div>
+            </div>
+
+            <!-- Level 3: Inside A Subfolder (Shows Files) -->
             <div id="single-folder-view" style="display:none; flex-direction:column; gap:20px;">
                 <div class="folder-header-bar">
-                    <button class="btn-back-folder" onclick="backToFolders()">
+                    <button class="btn-back-folder" onclick="backToSubfolders()">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
-                        Back to Folders
+                        Back to Subfolders
                     </button>
-                    <h3 id="current-folder-title" style="font-size:16px; font-weight:800; color:var(--text-dark);">Profile</h3>
+                    <h3 id="current-subfolder-title" style="font-size:16px; font-weight:800; color:var(--text-dark);">Subfolder</h3>
                     <span id="current-folder-count" style="font-size:12px; font-weight:700; color:var(--text-muted);">0 Records</span>
                 </div>
                 <div class="bento-feed" id="media-feed"></div>
@@ -557,7 +572,7 @@
             </div>
 
             <div>
-                <span style="font-size:12px; font-weight:700; color:var(--text-muted);">CREATE DIRECTORY / FOLDER</span>
+                <span style="font-size:12px; font-weight:700; color:var(--text-muted);">CREATE MAIN DIRECTORY</span>
                 <div style="display:flex; gap:10px; margin-top:8px;">
                     <input type="text" id="target-name-input" class="input-stylish" placeholder="Person name (e.g. Durgesh)">
                     <button class="action-explore-btn" style="padding:12px 24px;" onclick="addProfile()">Create</button>
@@ -567,10 +582,15 @@
             <hr style="border:none; border-top:1px solid #e2e8f0;">
 
             <div>
-                <span style="font-size:12px; font-weight:700; color:var(--text-muted);">UPLOAD TO DIRECTORY</span>
-                <select id="profile-select" class="input-stylish" style="margin-top:8px;">
-                    <option value="">Choose Directory Folder</option>
+                <span style="font-size:12px; font-weight:700; color:var(--text-muted);">UPLOAD FILES</span>
+                <select id="profile-select" class="input-stylish" style="margin-top:8px;" onchange="onAdminProfileSelect(this.value)">
+                    <option value="">Choose Main Directory</option>
                 </select>
+
+                <select id="subfolder-select" class="input-stylish" style="margin-top:8px;">
+                    <option value="General">Subfolder: General</option>
+                </select>
+
                 <input type="file" id="media-file-input" class="input-stylish" style="margin-top:10px;" multiple>
                 <button class="action-explore-btn" style="width:100%; justify-content:center; margin-top:14px;" onclick="uploadToCloudinary()">Upload Record(s)</button>
                 <p id="upload-feedback" style="font-size:12px; text-align:center; font-weight:600; margin-top:8px;"></p>
@@ -625,7 +645,9 @@
 
     let masterRecords = [];
     let targetsList = [];
-    let activeFolderName = null;
+    let subfoldersList = [];
+    let activePersonName = null;
+    let activeSubfolderName = null;
 
     // --- SECRET CLICK MECHANISM (7 CLICKS WITHIN 3 SECONDS) ---
     let clickCount = 0;
@@ -689,6 +711,7 @@
 
     window.executeLogout = () => signOut(auth);
 
+    // Create Main Directory Profile
     window.addProfile = async () => {
         const input = document.getElementById('target-name-input');
         const name = input.value.trim();
@@ -696,6 +719,8 @@
 
         try {
             await addDoc(collection(db, "vault_targets"), { name });
+            // Default General Subfolder
+            await addDoc(collection(db, "vault_subfolders"), { targetName: name, subfolder: "General" });
             input.value = "";
             refreshAdminDropdown();
             loadArchiveFeed();
@@ -703,9 +728,42 @@
         } catch(e) { alert(e.message); }
     };
 
+    // Prompt create subfolder from view
+    window.promptNewSubfolder = async () => {
+        if(!activePersonName) return;
+        const subName = prompt(`Naya subfolder banayein '${activePersonName}' ke liye:`);
+        if(!subName || !subName.trim()) return;
+
+        try {
+            await addDoc(collection(db, "vault_subfolders"), { 
+                targetName: activePersonName, 
+                subfolder: subName.trim() 
+            });
+            await loadArchiveFeed();
+            openPersonFolder(activePersonName);
+        } catch(e) { alert(e.message); }
+    };
+
+    window.onAdminProfileSelect = (person) => {
+        const subSelect = document.getElementById('subfolder-select');
+        subSelect.innerHTML = '<option value="General">Subfolder: General</option>';
+        if(!person) return;
+
+        const subs = subfoldersList.filter(s => s.targetName.toLowerCase() === person.toLowerCase());
+        const names = Array.from(new Set(subs.map(s => s.subfolder)));
+        names.forEach(sub => {
+            if(sub.toLowerCase() !== 'general') {
+                const opt = document.createElement('option');
+                opt.value = sub;
+                opt.textContent = `Subfolder: ${sub}`;
+                subSelect.appendChild(opt);
+            }
+        });
+    };
+
     async function refreshAdminDropdown() {
         const select = document.getElementById('profile-select');
-        select.innerHTML = '<option value="">Choose Directory Folder</option>';
+        select.innerHTML = '<option value="">Choose Main Directory</option>';
         try {
             const snap = await getDocs(collection(db, "vault_targets"));
             snap.forEach(doc => {
@@ -717,14 +775,15 @@
         } catch(e) { console.error(e); }
     }
 
-    // Multiple Files Cloudinary Upload
+    // Multiple Files Upload with Subfolder Support
     window.uploadToCloudinary = async () => {
         const person = document.getElementById('profile-select').value;
+        const subfolder = document.getElementById('subfolder-select').value || "General";
         const fileIn = document.getElementById('media-file-input');
         const feedback = document.getElementById('upload-feedback');
 
         if(!person || fileIn.files.length === 0) {
-            alert("Folder aur files choose kar pehle!");
+            alert("Directory aur files select karein pehle!");
             return;
         }
 
@@ -751,6 +810,7 @@
 
                 await addDoc(collection(db, "vault_media"), {
                     targetName: person,
+                    subfolder: subfolder,
                     url: data.secure_url,
                     type: file.type,
                     createdAt: new Date()
@@ -765,34 +825,44 @@
         }
     };
 
-    // Load Data & Render Folders
+    // Load All Data
     async function loadArchiveFeed() {
         const foldersGrid = document.getElementById('folders-grid');
         foldersGrid.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Loading directories...</p>';
 
         try {
-            // Fetch registered profiles
+            // 1. Fetch Targets
             const targetsSnap = await getDocs(collection(db, "vault_targets"));
             targetsList = [];
             targetsSnap.forEach(d => targetsList.push(d.data().name));
 
-            // Fetch all media
+            // 2. Fetch Subfolders
+            try {
+                const subSnap = await getDocs(collection(db, "vault_subfolders"));
+                subfoldersList = [];
+                subSnap.forEach(d => subfoldersList.push(d.data()));
+            } catch(e) { subfoldersList = []; }
+
+            // 3. Fetch Media
             const q = query(collection(db, "vault_media"), orderBy("createdAt", "desc"));
             const mediaSnap = await getDocs(q);
             masterRecords = [];
             mediaSnap.forEach(doc => masterRecords.push(doc.data()));
 
-            renderFolderCards();
+            renderMainFolderCards();
 
-            if (activeFolderName) {
-                openFolder(activeFolderName);
+            if (activeSubfolderName && activePersonName) {
+                openSubfolder(activeSubfolderName);
+            } else if (activePersonName) {
+                openPersonFolder(activePersonName);
             }
         } catch(e) {
             foldersGrid.innerHTML = '<p style="color:var(--text-muted);">Failed to load folders.</p>';
         }
     }
 
-    function renderFolderCards() {
+    // LEVEL 1: Render Main Person Folders
+    function renderMainFolderCards() {
         const foldersGrid = document.getElementById('folders-grid');
         foldersGrid.innerHTML = "";
 
@@ -805,40 +875,96 @@
             const count = masterRecords.filter(r => r.targetName.toLowerCase() === name.toLowerCase()).length;
             const card = document.createElement('div');
             card.className = 'folder-card';
-            card.onclick = () => openFolder(name);
+            card.onclick = () => openPersonFolder(name);
             card.innerHTML = `
                 <div class="folder-icon-wrap">
                     <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2H4z"/></svg>
                 </div>
                 <div class="folder-meta">
                     <h4>${name}</h4>
-                    <span>${count} Record${count === 1 ? '' : 's'}</span>
+                    <span>${count} File${count === 1 ? '' : 's'}</span>
                 </div>
             `;
             foldersGrid.appendChild(card);
         });
     }
 
-    // Open Folder
-    window.openFolder = (name) => {
-        activeFolderName = name;
-        document.getElementById('folders-container').style.display = 'none';
-        const singleView = document.getElementById('single-folder-view');
-        singleView.style.display = 'flex';
+    // LEVEL 2: Open Person Folder & Render Subfolders
+    window.openPersonFolder = (personName) => {
+        activePersonName = personName;
+        activeSubfolderName = null;
 
-        const folderItems = masterRecords.filter(r => r.targetName.toLowerCase() === name.toLowerCase());
-        document.getElementById('current-folder-title').innerText = `${name}'s Directory`;
-        document.getElementById('current-folder-count').innerText = `${folderItems.length} Record${folderItems.length === 1 ? '' : 's'}`;
+        document.getElementById('folders-container').style.display = 'none';
+        document.getElementById('single-folder-view').style.display = 'none';
+        const subView = document.getElementById('subfolders-view');
+        subView.style.display = 'flex';
+
+        document.getElementById('current-person-title').innerText = `${personName}'s Subfolders`;
+
+        // Gather subfolders
+        let personSubs = subfoldersList.filter(s => s.targetName.toLowerCase() === personName.toLowerCase()).map(s => s.subfolder);
+        // Add default General if empty
+        if (!personSubs.includes("General")) personSubs.unshift("General");
+
+        // Also add any subfolders referenced in media records
+        masterRecords.forEach(r => {
+            if(r.targetName.toLowerCase() === personName.toLowerCase() && r.subfolder) {
+                if(!personSubs.includes(r.subfolder)) personSubs.push(r.subfolder);
+            }
+        });
+        personSubs = Array.from(new Set(personSubs));
+
+        const grid = document.getElementById('subfolders-grid');
+        grid.innerHTML = "";
+
+        personSubs.forEach(subName => {
+            const fileCount = masterRecords.filter(r => 
+                r.targetName.toLowerCase() === personName.toLowerCase() && 
+                ((r.subfolder && r.subfolder.toLowerCase() === subName.toLowerCase()) || (!r.subfolder && subName.toLowerCase() === "general"))
+            ).length;
+
+            const card = document.createElement('div');
+            card.className = 'folder-card';
+            card.onclick = () => openSubfolder(subName);
+            card.innerHTML = `
+                <div class="folder-icon-wrap subfolder-icon-wrap">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="folder-meta">
+                    <h4>${subName}</h4>
+                    <span>${fileCount} File${fileCount === 1 ? '' : 's'}</span>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    };
+
+    // LEVEL 3: Open Subfolder & Render Bento Grid Files
+    window.openSubfolder = (subName) => {
+        activeSubfolderName = subName;
+
+        document.getElementById('subfolders-view').style.display = 'none';
+        const fileView = document.getElementById('single-folder-view');
+        fileView.style.display = 'flex';
+
+        document.getElementById('current-subfolder-title').innerText = `${activePersonName} / ${subName}`;
+
+        const files = masterRecords.filter(r => 
+            r.targetName.toLowerCase() === activePersonName.toLowerCase() && 
+            ((r.subfolder && r.subfolder.toLowerCase() === subName.toLowerCase()) || (!r.subfolder && subName.toLowerCase() === "general"))
+        );
+
+        document.getElementById('current-folder-count').innerText = `${files.length} File${files.length === 1 ? '' : 's'}`;
 
         const feed = document.getElementById('media-feed');
         feed.innerHTML = "";
 
-        if (folderItems.length === 0) {
-            feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Folder is empty. No records uploaded yet.</p>';
+        if (files.length === 0) {
+            feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Subfolder empty. Upload files from admin panel.</p>';
             return;
         }
 
-        folderItems.forEach(item => {
+        files.forEach(item => {
             const card = document.createElement('div');
             card.className = 'bento-card';
             card.onclick = () => openLightbox(item.url, item.type);
@@ -850,7 +976,7 @@
             card.innerHTML = `
                 <div class="media-frame">${mediaTag}</div>
                 <div class="card-footer">
-                    <span class="profile-badge">${item.targetName}</span>
+                    <span class="profile-badge">${subName}</span>
                     <span style="font-size:11px; color:var(--text-muted); font-weight:600;">Tap to enlarge</span>
                 </div>
             `;
@@ -858,14 +984,22 @@
         });
     };
 
-    // Back to Folders List
-    window.backToFolders = () => {
-        activeFolderName = null;
+    // Navigation Back Buttons
+    window.backToMainFolders = () => {
+        activePersonName = null;
+        activeSubfolderName = null;
+        document.getElementById('subfolders-view').style.display = 'none';
         document.getElementById('single-folder-view').style.display = 'none';
         document.getElementById('folders-container').style.display = 'block';
     };
 
-    // Lightbox / Fullscreen Preview Modal
+    window.backToSubfolders = () => {
+        activeSubfolderName = null;
+        document.getElementById('single-folder-view').style.display = 'none';
+        document.getElementById('subfolders-view').style.display = 'flex';
+    };
+
+    // Fullscreen Lightbox Preview
     window.openLightbox = (url, type) => {
         const slot = document.getElementById('lightbox-media-slot');
         if (type.includes('video')) {
