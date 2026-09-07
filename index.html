@@ -61,7 +61,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: space-between;
+            justify-content: flex-start;
             padding: 24px 0;
             z-index: 10;
         }
@@ -119,6 +119,13 @@
             color: rgba(255, 255, 255, 0.95);
             text-transform: uppercase;
             text-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            cursor: default;
+            user-select: none;
+            transition: opacity 0.2s;
+        }
+
+        .brand-tag:active {
+            opacity: 0.7;
         }
 
         .status-pill {
@@ -323,6 +330,7 @@
 <body>
 
 <div class="viewport-shell">
+    <!-- Clean Dock bar (Without obvious Admin Icon) -->
     <div class="dock-bar">
         <div class="dock-group">
             <div class="dock-btn active" title="Dossier" onclick="switchView('explore')">
@@ -332,17 +340,12 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
             </div>
         </div>
-
-        <div class="dock-group">
-            <div class="dock-btn" title="Admin Security Hub" onclick="openAdmin()">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </div>
-        </div>
     </div>
 
     <div class="main-canvas">
         <div class="floating-top-nav">
-            <span class="brand-tag">SECURE REPOSITORY</span>
+            <!-- Hidden Secret Trigger: Click 7 times to open Admin -->
+            <span class="brand-tag" id="secret-admin-trigger" onclick="handleSecretClick()">SECURE REPOSITORY</span>
             <div class="status-pill">
                 <div class="status-dot"></div>
                 <span id="nav-status-label">Ready</span>
@@ -366,13 +369,14 @@
     </div>
 </div>
 
+<!-- Hidden Admin Modal -->
 <div class="modal-overlay" id="admin-modal">
     <div class="modal-body">
         <button onclick="closeAdmin()" style="position:absolute; top:24px; right:24px; border:none; background:none; font-size:20px; cursor:pointer;">&times;</button>
         
         <div id="admin-login-box">
-            <h3>Admin Sign In</h3>
-            <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">Sign in via your Google account.</p>
+            <h3>Admin Access</h3>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">Authenticate using your authorized account.</p>
             <button class="action-explore-btn" style="width:100%; justify-content:center;" onclick="executeGoogleLogin()">Sign in with Google</button>
         </div>
 
@@ -410,7 +414,7 @@
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { getFirestore, collection, addDoc, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // 1. Firebase Config (Pre-configured)
+    // 1. Firebase Credentials Validated
     const firebaseConfig = {
         apiKey: "AIzaSyCJkf4BFI2Dnxy6s0zHVL1V_O0UKLNTyFA",
         authDomain: "vault-app-31cac.firebaseapp.com",
@@ -422,7 +426,7 @@
         measurementId: "G-452430JDS2"
     };
 
-    // 2. Cloudinary Credentials (Pre-configured)
+    // 2. Cloudinary Credentials Validated
     const CLOUDINARY_CLOUD_NAME = "f1rdlzvm";
     const CLOUDINARY_PRESET = "vault_preset";
 
@@ -432,6 +436,24 @@
     const provider = new GoogleAuthProvider();
 
     let masterRecords = [];
+
+    // --- SECRET CLICK MECHANISM (7 CLICKS WITHIN 3 SECONDS) ---
+    let clickCount = 0;
+    let clickTimer = null;
+
+    window.handleSecretClick = () => {
+        clickCount++;
+        clearTimeout(clickTimer);
+
+        if (clickCount >= 7) {
+            clickCount = 0;
+            openAdmin();
+        } else {
+            clickTimer = setTimeout(() => {
+                clickCount = 0;
+            }, 3000);
+        }
+    };
 
     window.switchView = (view) => {
         if(view === 'explore') {
@@ -461,7 +483,9 @@
     window.executeGoogleLogin = async () => {
         try {
             await signInWithPopup(auth, provider);
-        } catch(err) { alert(err.message); }
+        } catch(err) { 
+            alert(err.message); 
+        }
     };
 
     window.executeLogout = () => signOut(auth);
@@ -476,7 +500,7 @@
             input.value = "";
             refreshAdminDropdown();
             loadRibbonTabs();
-            alert("Added " + name);
+            alert("Registered: " + name);
         } catch(e) { alert(e.message); }
     };
 
@@ -492,14 +516,14 @@
         });
     }
 
-    // Direct Upload to Cloudinary & Metadata in Firestore
+    // Direct Cloudinary Upload Function
     window.uploadToCloudinary = async () => {
         const person = document.getElementById('profile-select').value;
         const fileIn = document.getElementById('media-file-input');
         const feedback = document.getElementById('upload-feedback');
 
         if(!person || fileIn.files.length === 0) {
-            alert("Profile aur file choose kar pehle!");
+            alert("Profile aur file dono select karo!");
             return;
         }
 
@@ -511,7 +535,7 @@
         formData.append("file", file);
         formData.append("upload_preset", CLOUDINARY_PRESET);
 
-        feedback.innerText = "Uploading securely to Cloudinary...";
+        feedback.innerText = "Encrypting & Uploading to Cloudinary...";
 
         try {
             const res = await fetch(endpoint, { method: "POST", body: formData });
@@ -519,6 +543,7 @@
 
             if (!res.ok) throw new Error(data.error?.message || "Upload failed");
 
+            // Firestore database entry
             await addDoc(collection(db, "media"), {
                 targetName: person,
                 url: data.secure_url,
@@ -526,7 +551,7 @@
                 createdAt: new Date()
             });
 
-            feedback.innerText = "Record successfully saved!";
+            feedback.innerText = "Record Uploaded Successfully!";
             fileIn.value = "";
             loadArchiveFeed();
         } catch(e) {
@@ -550,7 +575,7 @@
     async function loadArchiveFeed() {
         await loadRibbonTabs();
         const feed = document.getElementById('media-feed');
-        feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Retrieving files...</p>';
+        feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Decrypting log...</p>';
 
         try {
             const q = query(collection(db, "media"), orderBy("createdAt", "desc"));
@@ -559,7 +584,7 @@
             snap.forEach(doc => masterRecords.push(doc.data()));
             renderCards(masterRecords);
         } catch(e) {
-            feed.innerHTML = '<p style="color:var(--text-muted);">No records registered.</p>';
+            feed.innerHTML = '<p style="color:var(--text-muted);">No records found.</p>';
         }
     }
 
@@ -567,7 +592,7 @@
         const feed = document.getElementById('media-feed');
         feed.innerHTML = "";
         if(records.length === 0) {
-            feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">No files uploaded yet.</p>';
+            feed.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Vault empty.</p>';
             return;
         }
 
