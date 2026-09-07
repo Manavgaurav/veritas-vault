@@ -119,7 +119,7 @@
             color: rgba(255, 255, 255, 0.95);
             text-transform: uppercase;
             text-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            cursor: default;
+            cursor: pointer;
             user-select: none;
             transition: opacity 0.2s;
         }
@@ -280,7 +280,6 @@
             font-weight: 600;
         }
 
-        /* Action Buttons on Folders */
         .folder-actions {
             display: flex;
             align-items: center;
@@ -771,6 +770,16 @@
 
     window.executeLogout = () => signOut(auth);
 
+    // Auth Helper
+    function ensureAdminAuthenticated() {
+        if(!auth.currentUser) {
+            openAdmin();
+            alert("Please sign in with Google first to modify directories!");
+            return false;
+        }
+        return true;
+    }
+
     // Create Main Directory Profile
     window.addProfile = async () => {
         const input = document.getElementById('target-name-input');
@@ -782,19 +791,16 @@
             await addDoc(collection(db, "vault_subfolders"), { targetName: name, subfolder: "General" });
             input.value = "";
             refreshAdminDropdown();
-            loadArchiveFeed();
+            await loadArchiveFeed();
             alert("Directory created: " + name);
         } catch(e) { alert(e.message); }
     };
 
     // Prompt create subfolder
     window.promptNewSubfolder = async () => {
-        if(!auth.currentUser) {
-            alert("Sirf logged-in admin hi subfolder bana sakta hai!");
-            return;
-        }
+        if(!ensureAdminAuthenticated()) return;
         if(!activePersonName) return;
-        const subName = prompt(`Naya subfolder banayein '${activePersonName}' ke liye:`);
+        const subName = prompt(`Enter new subfolder name for '${activePersonName}':`);
         if(!subName || !subName.trim()) return;
 
         try {
@@ -808,40 +814,54 @@
     };
 
     // ==========================================
-    // RENAME & DELETE OPERATIONS
+    // ROBUST RENAME & DELETE OPERATIONS
     // ==========================================
 
     // Rename Main Person Folder
     window.renameMainFolder = async (e, oldName, docId) => {
         e.stopPropagation();
-        if(!auth.currentUser) {
-            alert("Sirf logged-in admin hi rename kar sakta hai!");
-            return;
-        }
+        if(!ensureAdminAuthenticated()) return;
 
-        const newName = prompt(`'${oldName}' ka naya naam rakhein:`, oldName);
-        if(!newName || !newName.trim() || newName.trim() === oldName) return;
+        const newName = prompt(`Enter new name for directory '${oldName}':`, oldName);
+        if(!newName || !newName.trim() || newName.trim().toLowerCase() === oldName.toLowerCase()) return;
+
+        const cleanNew = newName.trim();
 
         try {
-            const cleanNew = newName.trim();
             // 1. Update targets document
             await updateDoc(doc(db, "vault_targets", docId), { name: cleanNew });
 
-            // 2. Update all subfolders linked to this person
+            // 2. Update subfolders
             const subsToUpdate = subfoldersList.filter(s => s.targetName.toLowerCase() === oldName.toLowerCase());
             for (const sub of subsToUpdate) {
-                await updateDoc(doc(db, "vault_subfolders", sub.id), { targetName: cleanNew });
+                if (sub.id) {
+                    await updateDoc(doc(db, "vault_subfolders", sub.id), { targetName: cleanNew });
+                }
             }
 
-            // 3. Update all media records linked to this person
+            // 3. Update media items
             const mediaToUpdate = masterRecords.filter(m => m.targetName.toLowerCase() === oldName.toLowerCase());
             for (const item of mediaToUpdate) {
-                await updateDoc(doc(db, "vault_media", item.id), { targetName: cleanNew });
+                if (item.id) {
+                    await updateDoc(doc(db, "vault_media", item.id), { targetName: cleanNew });
+                }
             }
 
-            alert(`Directory successfully renamed to '${cleanNew}'!`);
-            await loadArchiveFeed();
+            // Immediate memory array sync & re-render
+            const targetObj = targetsList.find(t => t.id === docId);
+            if(targetObj) targetObj.name = cleanNew;
+            subfoldersList.forEach(s => {
+                if(s.targetName.toLowerCase() === oldName.toLowerCase()) s.targetName = cleanNew;
+            });
+            masterRecords.forEach(m => {
+                if(m.targetName.toLowerCase() === oldName.toLowerCase()) m.targetName = cleanNew;
+            });
+
+            renderMainFolderCards();
+            refreshAdminDropdown();
+            alert(`Renamed successfully to '${cleanNew}'!`);
         } catch(err) {
+            console.error(err);
             alert("Rename failed: " + err.message);
         }
     };
@@ -849,31 +869,30 @@
     // Delete Main Person Folder
     window.deleteMainFolder = async (e, name, docId) => {
         e.stopPropagation();
-        if(!auth.currentUser) {
-            alert("Sirf logged-in admin hi delete kar sakta hai!");
-            return;
-        }
+        if(!ensureAdminAuthenticated()) return;
 
-        if(!confirm(`⚠️ WARNING: Kya aap '${name}' folder aur uske andar ke SARE subfolders aur files delete karna chahte hain?`)) return;
+        if(!confirm(`⚠️ WARNING: Delete directory '${name}' and all its subfolders and files?`)) return;
 
         try {
-            // 1. Delete target doc
             await deleteDoc(doc(db, "vault_targets", docId));
 
-            // 2. Delete linked subfolder docs
             const subsToDelete = subfoldersList.filter(s => s.targetName.toLowerCase() === name.toLowerCase());
             for (const sub of subsToDelete) {
-                await deleteDoc(doc(db, "vault_subfolders", sub.id));
+                if(sub.id) await deleteDoc(doc(db, "vault_subfolders", sub.id));
             }
 
-            // 3. Delete linked media docs
             const mediaToDelete = masterRecords.filter(m => m.targetName.toLowerCase() === name.toLowerCase());
             for (const item of mediaToDelete) {
-                await deleteDoc(doc(db, "vault_media", item.id));
+                if(item.id) await deleteDoc(doc(db, "vault_media", item.id));
             }
 
-            alert(`Directory '${name}' delete ho gaya!`);
-            await loadArchiveFeed();
+            targetsList = targetsList.filter(t => t.id !== docId);
+            subfoldersList = subfoldersList.filter(s => s.targetName.toLowerCase() !== name.toLowerCase());
+            masterRecords = masterRecords.filter(m => m.targetName.toLowerCase() !== name.toLowerCase());
+
+            renderMainFolderCards();
+            refreshAdminDropdown();
+            alert(`Directory '${name}' deleted!`);
         } catch(err) {
             alert("Delete failed: " + err.message);
         }
@@ -882,38 +901,47 @@
     // Rename Subfolder
     window.renameSubfolder = async (e, parentName, oldSubName) => {
         e.stopPropagation();
-        if(!auth.currentUser) {
-            alert("Sirf logged-in admin hi rename kar sakta hai!");
-            return;
-        }
+        if(!ensureAdminAuthenticated()) return;
 
-        const newSub = prompt(`Subfolder '${oldSubName}' ka naya naam rakhein:`, oldSubName);
-        if(!newSub || !newSub.trim() || newSub.trim() === oldSubName) return;
+        const newSub = prompt(`Enter new name for subfolder '${oldSubName}':`, oldSubName);
+        if(!newSub || !newSub.trim() || newSub.trim().toLowerCase() === oldSubName.toLowerCase()) return;
+
+        const cleanSub = newSub.trim();
 
         try {
-            const cleanSub = newSub.trim();
-            // 1. Update in vault_subfolders
             const matchingSubs = subfoldersList.filter(s => 
                 s.targetName.toLowerCase() === parentName.toLowerCase() && 
-                s.subfolder.toLowerCase() === oldSubName.toLowerCase()
+                s.subfolder && s.subfolder.toLowerCase() === oldSubName.toLowerCase()
             );
+
             for (const s of matchingSubs) {
-                await updateDoc(doc(db, "vault_subfolders", s.id), { subfolder: cleanSub });
+                if(s.id) await updateDoc(doc(db, "vault_subfolders", s.id), { subfolder: cleanSub });
             }
 
-            // 2. Update in vault_media
             const mediaToUpdate = masterRecords.filter(m => 
                 m.targetName.toLowerCase() === parentName.toLowerCase() && 
-                m.subfolder && m.subfolder.toLowerCase() === oldSubName.toLowerCase()
+                ((m.subfolder && m.subfolder.toLowerCase() === oldSubName.toLowerCase()) || (!m.subfolder && oldSubName.toLowerCase() === "general"))
             );
+
             for (const m of mediaToUpdate) {
-                await updateDoc(doc(db, "vault_media", m.id), { subfolder: cleanSub });
+                if(m.id) await updateDoc(doc(db, "vault_media", m.id), { subfolder: cleanSub });
             }
 
-            alert(`Subfolder renamed to '${cleanSub}'!`);
-            await loadArchiveFeed();
+            subfoldersList.forEach(s => {
+                if(s.targetName.toLowerCase() === parentName.toLowerCase() && s.subfolder && s.subfolder.toLowerCase() === oldSubName.toLowerCase()) {
+                    s.subfolder = cleanSub;
+                }
+            });
+            masterRecords.forEach(m => {
+                if(m.targetName.toLowerCase() === parentName.toLowerCase() && ((m.subfolder && m.subfolder.toLowerCase() === oldSubName.toLowerCase()) || (!m.subfolder && oldSubName.toLowerCase() === "general"))) {
+                    m.subfolder = cleanSub;
+                }
+            });
+
             openPersonFolder(parentName);
+            alert(`Subfolder renamed to '${cleanSub}'!`);
         } catch(err) {
+            console.error(err);
             alert("Rename failed: " + err.message);
         }
     };
@@ -921,33 +949,32 @@
     // Delete Subfolder
     window.deleteSubfolder = async (e, parentName, subName) => {
         e.stopPropagation();
-        if(!auth.currentUser) {
-            alert("Sirf logged-in admin hi delete kar sakta hai!");
-            return;
-        }
+        if(!ensureAdminAuthenticated()) return;
 
-        if(!confirm(`⚠️ Subfolder '${subName}' aur uske andar ke media records delete karein?`)) return;
+        if(!confirm(`⚠️ Delete subfolder '${subName}' and its files?`)) return;
 
         try {
             const matchingSubs = subfoldersList.filter(s => 
                 s.targetName.toLowerCase() === parentName.toLowerCase() && 
-                s.subfolder.toLowerCase() === subName.toLowerCase()
+                s.subfolder && s.subfolder.toLowerCase() === subName.toLowerCase()
             );
             for (const s of matchingSubs) {
-                await deleteDoc(doc(db, "vault_subfolders", s.id));
+                if(s.id) await deleteDoc(doc(db, "vault_subfolders", s.id));
             }
 
             const mediaToDelete = masterRecords.filter(m => 
                 m.targetName.toLowerCase() === parentName.toLowerCase() && 
-                m.subfolder && m.subfolder.toLowerCase() === subName.toLowerCase()
+                ((m.subfolder && m.subfolder.toLowerCase() === subName.toLowerCase()) || (!m.subfolder && subName.toLowerCase() === "general"))
             );
             for (const m of mediaToDelete) {
-                await deleteDoc(doc(db, "vault_media", m.id));
+                if(m.id) await deleteDoc(doc(db, "vault_media", m.id));
             }
 
-            alert(`Subfolder '${subName}' deleted!`);
-            await loadArchiveFeed();
+            subfoldersList = subfoldersList.filter(s => !(s.targetName.toLowerCase() === parentName.toLowerCase() && s.subfolder && s.subfolder.toLowerCase() === subName.toLowerCase()));
+            masterRecords = masterRecords.filter(m => !(m.targetName.toLowerCase() === parentName.toLowerCase() && ((m.subfolder && m.subfolder.toLowerCase() === subName.toLowerCase()) || (!m.subfolder && subName.toLowerCase() === "general"))));
+
             openPersonFolder(parentName);
+            alert(`Subfolder '${subName}' deleted!`);
         } catch(err) {
             alert("Delete failed: " + err.message);
         }
@@ -956,16 +983,13 @@
     // Delete Single Media File
     window.deleteMediaFile = async (e, mediaId) => {
         e.stopPropagation();
-        if(!auth.currentUser) {
-            alert("Sirf logged-in admin hi file delete kar sakta hai!");
-            return;
-        }
+        if(!ensureAdminAuthenticated()) return;
 
-        if(!confirm("Pakka is record file ko delete karna hai?")) return;
+        if(!confirm("Delete this record file?")) return;
 
         try {
             await deleteDoc(doc(db, "vault_media", mediaId));
-            await loadArchiveFeed();
+            masterRecords = masterRecords.filter(m => m.id !== mediaId);
             if(activeSubfolderName) openSubfolder(activeSubfolderName);
         } catch(err) {
             alert("Delete failed: " + err.message);
@@ -977,10 +1001,10 @@
         subSelect.innerHTML = '<option value="General">Subfolder: General</option>';
         if(!person) return;
 
-        const subs = subfoldersList.filter(s => s.targetName.toLowerCase() === person.toLowerCase());
+        const subs = subfoldersList.filter(s => s.targetName && s.targetName.toLowerCase() === person.toLowerCase());
         const names = Array.from(new Set(subs.map(s => s.subfolder)));
         names.forEach(sub => {
-            if(sub.toLowerCase() !== 'general') {
+            if(sub && sub.toLowerCase() !== 'general') {
                 const opt = document.createElement('option');
                 opt.value = sub;
                 opt.textContent = `Subfolder: ${sub}`;
@@ -1011,7 +1035,7 @@
         const feedback = document.getElementById('upload-feedback');
 
         if(!person || fileIn.files.length === 0) {
-            alert("Directory aur files select karein pehle!");
+            alert("Select directory and files first!");
             return;
         }
 
@@ -1036,7 +1060,16 @@
 
                 if (!res.ok) throw new Error(data.error?.message || `Upload failed for ${file.name}`);
 
-                await addDoc(collection(db, "vault_media"), {
+                const newDocRef = await addDoc(collection(db, "vault_media"), {
+                    targetName: person,
+                    subfolder: subfolder,
+                    url: data.secure_url,
+                    type: file.type,
+                    createdAt: new Date()
+                });
+
+                masterRecords.unshift({
+                    id: newDocRef.id,
                     targetName: person,
                     subfolder: subfolder,
                     url: data.secure_url,
@@ -1047,7 +1080,8 @@
 
             feedback.innerText = `All ${totalFiles} records uploaded!`;
             fileIn.value = "";
-            loadArchiveFeed();
+            renderMainFolderCards();
+            if(activeSubfolderName) openSubfolder(activeSubfolderName);
         } catch(e) {
             feedback.innerText = "Error: " + e.message;
         }
@@ -1056,7 +1090,7 @@
     // Load All Data
     async function loadArchiveFeed() {
         const foldersGrid = document.getElementById('folders-grid');
-        foldersGrid.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Loading directories...</p>';
+        if(foldersGrid) foldersGrid.innerHTML = '<p style="color:var(--text-muted); font-size:14px;">Loading directories...</p>';
 
         try {
             // 1. Targets
@@ -1085,13 +1119,14 @@
                 openPersonFolder(activePersonName);
             }
         } catch(e) {
-            foldersGrid.innerHTML = '<p style="color:var(--text-muted);">Failed to load folders.</p>';
+            if(foldersGrid) foldersGrid.innerHTML = '<p style="color:var(--text-muted);">Failed to load folders.</p>';
         }
     }
 
     // LEVEL 1: Render Main Person Folders
     function renderMainFolderCards() {
         const foldersGrid = document.getElementById('folders-grid');
+        if(!foldersGrid) return;
         foldersGrid.innerHTML = "";
 
         if(targetsList.length === 0) {
@@ -1100,7 +1135,7 @@
         }
 
         targetsList.forEach(t => {
-            const count = masterRecords.filter(r => r.targetName.toLowerCase() === t.name.toLowerCase()).length;
+            const count = masterRecords.filter(r => r.targetName && r.targetName.toLowerCase() === t.name.toLowerCase()).length;
             const card = document.createElement('div');
             card.className = 'folder-card';
             card.onclick = () => openPersonFolder(t.name);
@@ -1139,22 +1174,22 @@
 
         document.getElementById('current-person-title').innerText = `${personName}'s Subfolders`;
 
-        let personSubs = subfoldersList.filter(s => s.targetName.toLowerCase() === personName.toLowerCase()).map(s => s.subfolder);
-        if (!personSubs.includes("General")) personSubs.unshift("General");
+        let personSubs = subfoldersList.filter(s => s.targetName && s.targetName.toLowerCase() === personName.toLowerCase()).map(s => s.subfolder);
+        if (!personSubs.some(s => s && s.toLowerCase() === "general")) personSubs.unshift("General");
 
         masterRecords.forEach(r => {
-            if(r.targetName.toLowerCase() === personName.toLowerCase() && r.subfolder) {
+            if(r.targetName && r.targetName.toLowerCase() === personName.toLowerCase() && r.subfolder) {
                 if(!personSubs.includes(r.subfolder)) personSubs.push(r.subfolder);
             }
         });
-        personSubs = Array.from(new Set(personSubs));
+        personSubs = Array.from(new Set(personSubs.filter(Boolean)));
 
         const grid = document.getElementById('subfolders-grid');
         grid.innerHTML = "";
 
         personSubs.forEach(subName => {
             const fileCount = masterRecords.filter(r => 
-                r.targetName.toLowerCase() === personName.toLowerCase() && 
+                r.targetName && r.targetName.toLowerCase() === personName.toLowerCase() && 
                 ((r.subfolder && r.subfolder.toLowerCase() === subName.toLowerCase()) || (!r.subfolder && subName.toLowerCase() === "general"))
             ).length;
 
@@ -1195,7 +1230,7 @@
         document.getElementById('current-subfolder-title').innerText = `${activePersonName} / ${subName}`;
 
         const files = masterRecords.filter(r => 
-            r.targetName.toLowerCase() === activePersonName.toLowerCase() && 
+            r.targetName && r.targetName.toLowerCase() === activePersonName.toLowerCase() && 
             ((r.subfolder && r.subfolder.toLowerCase() === subName.toLowerCase()) || (!r.subfolder && subName.toLowerCase() === "general"))
         );
 
@@ -1214,7 +1249,7 @@
             card.className = 'bento-card';
             card.onclick = () => openLightbox(item.url, item.type);
 
-            const mediaTag = item.type.includes('video')
+            const mediaTag = item.type && item.type.includes('video')
                 ? `<video src="${item.url}" muted></video>`
                 : `<img src="${item.url}" alt="record">`;
 
@@ -1251,7 +1286,7 @@
     // Fullscreen Lightbox Preview
     window.openLightbox = (url, type) => {
         const slot = document.getElementById('lightbox-media-slot');
-        if (type.includes('video')) {
+        if (type && type.includes('video')) {
             slot.innerHTML = `<video src="${url}" controls autoplay></video>`;
         } else {
             slot.innerHTML = `<img src="${url}" alt="fullscreen preview">`;
